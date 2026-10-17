@@ -10,6 +10,7 @@ import {
   MinLength,
   validateSync,
 } from 'class-validator';
+import { paymentProviderNames, type PaymentProviderName } from '../billing/providers/payment-provider.js';
 
 /** Every environment variable the API reads. Validated once at startup. */
 export class Env {
@@ -105,6 +106,42 @@ export class Env {
 
   @IsString()
   MAIL_FROM: string = 'Play & Learn <no-reply@localhost>';
+
+  /** Which payment gateway to use; payments are off while empty. "fake" is a local test gateway (not allowed in production). */
+  @IsOptional()
+  @IsIn([...paymentProviderNames, ''])
+  PAYMENT_PROVIDER?: PaymentProviderName | '';
+
+  @IsOptional()
+  @IsString()
+  RAZORPAY_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  RAZORPAY_KEY_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  RAZORPAY_WEBHOOK_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  CASHFREE_APP_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  CASHFREE_SECRET_KEY?: string;
+
+  @IsIn(['sandbox', 'production'])
+  CASHFREE_ENV: 'sandbox' | 'production' = 'sandbox';
+
+  @IsOptional()
+  @IsString()
+  STRIPE_SECRET_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  STRIPE_WEBHOOK_SECRET?: string;
 
   /** Must match an authorised redirect URI in the Google Cloud console. */
   @IsOptional()

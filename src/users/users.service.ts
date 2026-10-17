@@ -1,7 +1,7 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { User, type SubscriptionStatus, type UserDocument } from './user.schema.js';
+import { User, type SubscriptionStatus, type UserDocument, type UserRole } from './user.schema.js';
 
 /** The account as the web app sees it; never includes secrets. */
 export type PublicUser = {
@@ -11,6 +11,8 @@ export type PublicUser = {
   avatarUrl: string | null;
   emailVerified: boolean;
   providers: ('password' | 'google')[];
+  role: UserRole;
+  isAdmin: boolean;
   subscription: { status: SubscriptionStatus; plan: string | null; currentPeriodEnd: string | null };
   createdAt: string;
 };
@@ -23,6 +25,35 @@ const isDuplicateKey = (error: unknown) => (error as { code?: number } | null)?.
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private readonly users: Model<User>) {}
+
+  isAdmin(user: UserDocument): boolean {
+    return user.role === 'admin';
+  }
+
+  /** Creates an admin account directly (no emailed code: whoever runs this has server access). */
+  async createAdmin(email: string, name: string, passwordHash: string): Promise<UserDocument> {
+    try {
+      return await this.users.create({ email, name, passwordHash, hasPassword: true, emailVerified: true, role: 'admin' });
+    } catch (error) {
+      if (isDuplicateKey(error)) throw new ConflictException(`${email} already has an account. Promote it instead.`);
+      throw error;
+    }
+  }
+
+  /** Returns the updated account, or null when no account has this email. */
+  setRole(email: string, role: UserRole): Promise<UserDocument | null> {
+    return this.users.findOneAndUpdate({ email: email.toLowerCase() }, { $set: { role } }, { returnDocument: 'after' }).exec();
+  }
+
+  listAdmins(): Promise<UserDocument[]> {
+    return this.users.find({ role: 'admin' }).sort({ email: 1 }).exec();
+  }
+
+  /** "expired" once an active period has ended. */
+  subscriptionStatus(user: UserDocument, now = new Date()): SubscriptionStatus {
+    if (user.subscription?.status !== 'active') return 'none';
+    return user.subscription.currentPeriodEnd && user.subscription.currentPeriodEnd > now ? 'active' : 'expired';
+  }
 
   findById(id: string): Promise<UserDocument | null> {
     return this.users.findById(id).exec();
@@ -81,6 +112,34 @@ export class UsersService {
     }
   }
 
+  /**
+   * Adds `days` of Premium: from the current end date if still active, otherwise from now.
+   * A single atomic update, so two payments confirmed at the same moment both count.
+   */
+  async extendPremium(userId: string, planName: string, days: number, now = new Date()): Promise<void> {
+    await this.users
+      .updateOne({ _id: userId }, [
+        {
+          $set: {
+            'subscription.status': 'active',
+            'subscription.plan': planName,
+            'subscription.currentPeriodEnd': { $add: [{ $max: [{ $ifNull: ['$subscription.currentPeriodEnd', now] }, now] }, days * 24 * 60 * 60 * 1000] },
+          },
+        },
+      ], { updatePipeline: true })
+      .exec();
+  }
+
+  countActivePremium(now = new Date()): Promise<number> {
+    return this.users.countDocuments({ 'subscription.status': 'active', 'subscription.currentPeriodEnd': { $gt: now } }).exec();
+  }
+
+  /** id → email, for admin lists. */
+  async emailsByIds(ids: readonly string[]): Promise<Map<string, string>> {
+    const found = await this.users.find({ _id: { $in: ids } }, { email: 1 }).lean().exec();
+    return new Map(found.map((user) => [String(user._id), user.email]));
+  }
+
   toPublic(user: UserDocument): PublicUser {
     const providers: PublicUser['providers'] = [];
     if (user.hasPassword) providers.push('password');
@@ -92,8 +151,10 @@ export class UsersService {
       avatarUrl: user.avatarUrl,
       emailVerified: user.emailVerified,
       providers,
+      role: user.role ?? 'user',
+      isAdmin: this.isAdmin(user),
       subscription: {
-        status: user.subscription?.status ?? 'none',
+        status: this.subscriptionStatus(user),
         plan: user.subscription?.plan ?? null,
         currentPeriodEnd: user.subscription?.currentPeriodEnd?.toISOString() ?? null,
       },

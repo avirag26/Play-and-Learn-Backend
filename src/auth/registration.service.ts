@@ -89,7 +89,7 @@ export class RegistrationService {
 
     if (!this.sameHash(pending.codeHash, this.hashCode(email, code))) {
       // Counted atomically, so parallel guesses cannot exceed the limit.
-      const counted = await this.pending.findOneAndUpdate({ _id: pending._id, codeHash: pending.codeHash, attempts: { $lt: MAX_CODE_ATTEMPTS } }, { $inc: { attempts: 1 } }, { new: true }).exec();
+      const counted = await this.pending.findOneAndUpdate({ _id: pending._id, codeHash: pending.codeHash, attempts: { $lt: MAX_CODE_ATTEMPTS } }, { $inc: { attempts: 1 } }, { returnDocument: 'after' }).exec();
       const left = counted ? MAX_CODE_ATTEMPTS - counted.attempts : 0;
       throw new BadRequestException(left > 0 ? `That code isn't right. ${left} ${left === 1 ? 'try' : 'tries'} left.` : 'Too many wrong codes. Request a new one.');
     }

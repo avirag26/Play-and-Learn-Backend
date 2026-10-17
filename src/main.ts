@@ -13,7 +13,8 @@ async function bootstrap() {
   const dnsServers = process.env.DNS_SERVERS?.split(',').map((server) => server.trim()).filter(Boolean);
   if (dnsServers?.length) setServers(dnsServers);
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: payment webhooks are verified against the exact bytes the gateway signed.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   configureApp(app);
   await app.listen(app.get<ConfigService<Env, true>>(ConfigService).get('PORT', { infer: true }));
 }

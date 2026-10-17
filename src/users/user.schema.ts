@@ -1,14 +1,18 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import type { HydratedDocument } from 'mongoose';
 
-export const subscriptionStatuses = ['none', 'trialing', 'active', 'past_due', 'canceled'] as const;
-export type SubscriptionStatus = (typeof subscriptionStatuses)[number];
+export const userRoles = ['user', 'admin'] as const;
+export type UserRole = (typeof userRoles)[number];
 
-/** Billing state for the account. Payments will update this; sign-in only reads it. */
+/** Stored states. "expired" is never stored: it is an active subscription whose period has ended (see UsersService.toPublic). */
+export const subscriptionStatuses = ['none', 'active'] as const;
+export type SubscriptionStatus = (typeof subscriptionStatuses)[number] | 'expired';
+
+/** Premium access: each payment extends `currentPeriodEnd` by the plan's duration. */
 @Schema({ _id: false })
 export class Subscription {
   @Prop({ type: String, enum: subscriptionStatuses, default: 'none' })
-  status: SubscriptionStatus;
+  status: (typeof subscriptionStatuses)[number];
 
   @Prop({ type: String, default: null })
   plan: string | null;
@@ -33,6 +37,10 @@ export class User {
   /** Whether a password is set; readable without loading the hash. */
   @Prop({ default: false })
   hasPassword: boolean;
+
+  /** "admin" can use the admin app. Changed only with `npm run admin` on the server, never through the API. */
+  @Prop({ type: String, enum: userRoles, default: 'user', index: true })
+  role: UserRole;
 
   /** Google's stable account id (the ID token's `sub`). */
   @Prop({ type: String, unique: true, sparse: true })

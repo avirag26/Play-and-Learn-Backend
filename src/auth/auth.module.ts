@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { MailModule } from '../mail/mail.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { AuthController } from './auth.controller.js';
+import { AdminGuard } from './admin.guard.js';
 import { AuthService } from './auth.service.js';
 import { GoogleAuthService } from './google-auth.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
@@ -24,7 +25,7 @@ import { TokensService } from './tokens.service.js';
     ]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, RegistrationService, TokensService, GoogleAuthService, JwtAuthGuard],
-  exports: [TokensService, JwtAuthGuard],
+  providers: [AuthService, RegistrationService, TokensService, GoogleAuthService, JwtAuthGuard, AdminGuard],
+  exports: [TokensService, JwtAuthGuard, AdminGuard],
 })
 export class AuthModule {}
