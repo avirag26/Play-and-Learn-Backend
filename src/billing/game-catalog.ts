@@ -6,6 +6,7 @@ export const gameCatalog = [
   { id: 'alphabet-adventure', title: 'Alphabet Adventure', emoji: '🔤' },
   { id: 'animal-safari', title: 'Animal Safari', emoji: '🦁' },
   { id: 'color-quest', title: 'Color Quest', emoji: '🎨' },
+  { id: 'count-the-stars', title: 'Count the Stars', emoji: '⭐' },
 ] as const;
 
 export const gameIds: readonly string[] = gameCatalog.map((game) => game.id);
