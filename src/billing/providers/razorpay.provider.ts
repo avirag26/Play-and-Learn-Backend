@@ -1,15 +1,20 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { gatewayRequest, header, InvalidWebhookError, type CheckoutRequest, type CheckoutSession, type PaymentProvider, type ProviderPaymentStatus, type WebhookEvent, type WebhookHeaders } from './payment-provider.js';
+import { gatewayRequest, header, InvalidWebhookError, type CheckoutRequest, type CheckoutSession, type PaymentProvider, type PopupProof, type ProviderPaymentStatus, type WebhookEvent, type WebhookHeaders } from './payment-provider.js';
 
-type PaymentLink = { id: string; short_url: string; status: 'created' | 'partially_paid' | 'expired' | 'cancelled' | 'paid' };
+type Order = { id: string; amount: number; currency: string; status: 'created' | 'attempted' | 'paid' };
+type Payment = { id: string; order_id: string | null; amount: number; currency: string; status: 'created' | 'authorized' | 'captured' | 'refunded' | 'failed' };
+/** Checkouts started before the switch to the popup used Payment Links; they still settle normally. */
+type PaymentLink = { id: string; status: 'created' | 'partially_paid' | 'expired' | 'cancelled' | 'paid' };
 
-/** Without webhookSecret, webhooks are rejected and payments are confirmed only when the browser returns. */
+/** Without webhookSecret, webhooks are rejected and payments are confirmed only from the browser. */
 export type RazorpayConfig = { keyId: string; keySecret: string; webhookSecret?: string };
 
+const safeEqual = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
 /**
- * Razorpay Payment Links: a hosted page that sends the browser back to `returnUrl`.
- * Docs: https://razorpay.com/docs/api/payments/payment-links/
- * Webhook: subscribe to `payment_link.paid` (and optionally `payment_link.expired` / `payment_link.cancelled`).
+ * Razorpay Standard Checkout: we create an Order, the browser opens Razorpay's popup on our page,
+ * and the popup's signed result comes back to confirmPopup. Docs: https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/
+ * Webhook: subscribe to `order.paid` (and `payment_link.paid` while old links are still open).
  */
 export class RazorpayProvider implements PaymentProvider {
   readonly name = 'razorpay' as const;
@@ -19,34 +24,44 @@ export class RazorpayProvider implements PaymentProvider {
   constructor(private readonly config: RazorpayConfig) {}
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutSession> {
-    const link = await this.call<PaymentLink>('POST', '/payment_links', {
-      amount: request.amount,
-      currency: request.currency,
-      description: request.description,
-      reference_id: request.reference,
-      customer: { name: request.customer.name, email: request.customer.email, ...(request.customer.phone ? { contact: request.customer.phone } : {}) },
-      notify: { sms: false, email: false },
-      callback_url: request.returnUrl,
-      callback_method: 'get',
-      notes: { userId: request.customer.id },
-    });
-    return { providerRef: link.id, url: link.short_url };
+    const order = await this.call<Order>('POST', '/orders', { amount: request.amount, currency: request.currency, receipt: request.reference, notes: { userId: request.customer.id, reference: request.reference } });
+    return { providerRef: order.id, popup: { provider: 'razorpay', keyId: this.config.keyId, orderId: order.id, amount: order.amount, currency: order.currency } };
   }
 
   async fetchStatus(providerRef: string): Promise<ProviderPaymentStatus> {
-    const link = await this.call<PaymentLink>('GET', `/payment_links/${encodeURIComponent(providerRef)}`);
-    return toStatus(link.status);
+    if (providerRef.startsWith('plink_')) {
+      const link = await this.call<PaymentLink>('GET', `/payment_links/${encodeURIComponent(providerRef)}`);
+      return linkStatus(link.status);
+    }
+    // A failed attempt leaves the order open for another try, so only "paid" is final.
+    const order = await this.call<Order>('GET', `/orders/${encodeURIComponent(providerRef)}`);
+    return order.status === 'paid' ? 'paid' : 'pending';
+  }
+
+  /**
+   * Checks Razorpay's signature over "order_id|payment_id" (signed with our key secret, so the browser
+   * can't forge it), then makes sure the money is actually captured.
+   */
+  async confirmPopup(providerRef: string, proof: PopupProof): Promise<ProviderPaymentStatus> {
+    const expected = createHmac('sha256', this.config.keySecret).update(`${proof.orderId}|${proof.paymentId}`).digest('hex');
+    if (proof.orderId !== providerRef || !safeEqual(proof.signature, expected)) throw new InvalidWebhookError('Razorpay checkout signature mismatch');
+    let payment = await this.call<Payment>('GET', `/payments/${encodeURIComponent(proof.paymentId)}`);
+    if (payment.order_id !== providerRef) throw new InvalidWebhookError('Razorpay payment belongs to another order');
+    // Accounts without automatic capture leave payments "authorized" (and refund them after a few days).
+    if (payment.status === 'authorized') payment = await this.call<Payment>('POST', `/payments/${encodeURIComponent(payment.id)}/capture`, { amount: payment.amount, currency: payment.currency });
+    return payment.status === 'captured' ? 'paid' : payment.status === 'failed' ? 'failed' : 'pending';
   }
 
   parseWebhook(rawBody: Buffer, headers: WebhookHeaders): WebhookEvent {
     if (!this.config.webhookSecret) throw new InvalidWebhookError('RAZORPAY_WEBHOOK_SECRET is not set');
-    const signature = header(headers, 'x-razorpay-signature') ?? '';
     const expected = createHmac('sha256', this.config.webhookSecret).update(rawBody).digest('hex');
-    if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new InvalidWebhookError('Razorpay signature mismatch');
-    const event = JSON.parse(rawBody.toString('utf8')) as { event?: string; payload?: { payment_link?: { entity?: PaymentLink } } };
+    if (!safeEqual(header(headers, 'x-razorpay-signature') ?? '', expected)) throw new InvalidWebhookError('Razorpay signature mismatch');
+    const event = JSON.parse(rawBody.toString('utf8')) as { event?: string; payload?: { order?: { entity?: Order }; payment?: { entity?: Payment }; payment_link?: { entity?: PaymentLink } } };
+    if (event.event === 'order.paid' && event.payload?.order?.entity?.id) return { providerRef: event.payload.order.entity.id, status: 'paid' };
+    if (event.event === 'payment.captured' && event.payload?.payment?.entity?.order_id) return { providerRef: event.payload.payment.entity.order_id, status: 'paid' };
     const link = event.payload?.payment_link?.entity;
-    if (!event.event?.startsWith('payment_link.') || !link?.id) return null;
-    return { providerRef: link.id, status: toStatus(link.status) };
+    if (event.event?.startsWith('payment_link.') && link?.id) return { providerRef: link.id, status: linkStatus(link.status) };
+    return null;
   }
 
   private call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
@@ -55,7 +70,7 @@ export class RazorpayProvider implements PaymentProvider {
   }
 }
 
-function toStatus(status: PaymentLink['status']): ProviderPaymentStatus {
+function linkStatus(status: PaymentLink['status']): ProviderPaymentStatus {
   if (status === 'paid') return 'paid';
   return status === 'expired' || status === 'cancelled' ? 'failed' : 'pending';
 }

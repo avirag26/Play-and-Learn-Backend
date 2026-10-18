@@ -8,7 +8,7 @@ import type { UpdatePlanDto } from './dto/billing.dto.js';
 import { gameCatalog } from './game-catalog.js';
 import { Payment, type PaymentDocument, type PaymentStatus } from './payment.schema.js';
 import { defaultPlan, PLAN_KEY, PlanSettings } from './plan-settings.schema.js';
-import { PAYMENT_PROVIDER, type PaymentProvider, type WebhookHeaders } from './providers/payment-provider.js';
+import { InvalidWebhookError, PAYMENT_PROVIDER, type PaymentProvider, type PopupCheckout, type PopupProof, type WebhookHeaders } from './providers/payment-provider.js';
 
 export type Plan = typeof defaultPlan & { updatedAt: string | null; updatedBy: string | null };
 
@@ -23,6 +23,9 @@ export type PublicPlan = {
   available: boolean;
   requiresPhone: boolean;
 };
+
+/** Either a page to send the browser to, or what it needs to open the gateway's popup. */
+export type CheckoutStart = { url: string } | { paymentId: string; popup: PopupCheckout & { name: string; description: string; prefill: { name: string; email: string } } };
 
 export type AdminPayment = { id: string; email: string | null; provider: string; amount: number; currency: string; durationDays: number; status: PaymentStatus; createdAt: string; paidAt: string | null };
 export type AdminOverview = { activePremium: number; paidCount: number; revenue: { currency: string; amount: number }[]; payments: AdminPayment[]; provider: string | null };
@@ -62,8 +65,8 @@ export class BillingService {
     return this.getPlan();
   }
 
-  /** Starts a payment and returns the gateway's hosted checkout page. */
-  async createCheckout(userId: string, phone: string | undefined): Promise<{ url: string }> {
+  /** Starts a payment: returns the gateway's hosted page, or the details for its popup. */
+  async createCheckout(userId: string, phone: string | undefined): Promise<CheckoutStart> {
     const plan = await this.getPlan();
     if (!this.provider) throw new ServiceUnavailableException('Payments are not set up yet.');
     if (!plan.active) throw new ConflictException('Premium is not on sale right now.');
@@ -72,17 +75,18 @@ export class BillingService {
     if (!user) throw new NotFoundException('Account not found.');
 
     const payment = await this.payments.create({ userId: new Types.ObjectId(userId), provider: this.provider.name, planName: plan.name, amount: plan.amount, currency: plan.currency, durationDays: plan.durationDays });
+    const description = `${plan.name} (${plan.durationDays} days)`;
     try {
       const session = await this.provider.createCheckout({
         reference: payment.id as string,
         amount: plan.amount,
         currency: plan.currency,
-        description: `${plan.name} (${plan.durationDays} days)`,
+        description,
         customer: { id: userId, email: user.email, name: user.name, phone },
         returnUrl: new URL(`/api/billing/return?ref=${payment.id as string}`, this.config.get('FRONTEND_URL', { infer: true })).toString(),
       });
       await this.payments.updateOne({ _id: payment._id }, { $set: { providerRef: session.providerRef } }).exec();
-      return { url: session.url };
+      return 'popup' in session ? { paymentId: payment.id as string, popup: { ...session.popup, name: plan.name, description, prefill: { name: user.name, email: user.email } } } : { url: session.url };
     } catch (error) {
       await this.payments.updateOne({ _id: payment._id }, { $set: { status: 'failed' } }).exec();
       this.logger.error(`Could not start a ${this.provider.name} checkout`, error instanceof Error ? error.message : String(error));
@@ -102,6 +106,30 @@ export class BillingService {
     } catch (error) {
       // The webhook will still settle it; tell the parent it is being confirmed.
       this.logger.warn(`Could not check payment ${paymentId} with ${payment.provider}: ${error instanceof Error ? error.message : String(error)}`);
+      return 'created';
+    }
+  }
+
+  /**
+   * The popup reported a payment: check its proof with the gateway and settle. Only the parent who
+   * started the payment can confirm it.
+   */
+  async confirmPopup(userId: string, paymentId: string, proof: PopupProof): Promise<PaymentStatus> {
+    if (!isValidObjectId(paymentId)) throw new NotFoundException('Payment not found.');
+    const payment = await this.payments.findOne({ _id: paymentId, userId: new Types.ObjectId(userId) }).exec();
+    if (!payment) throw new NotFoundException('Payment not found.');
+    if (payment.status === 'paid') return 'paid';
+    if (!payment.providerRef || !this.provider?.confirmPopup || this.provider.name !== payment.provider) throw new BadRequestException('This payment cannot be confirmed here.');
+    try {
+      const status = await this.provider.confirmPopup(payment.providerRef, proof);
+      return status === 'pending' ? 'created' : this.settle(payment, status);
+    } catch (error) {
+      if (error instanceof InvalidWebhookError) {
+        this.logger.warn(`Rejected popup confirmation for payment ${paymentId}: ${error.message}`);
+        throw new BadRequestException("We couldn't verify this payment.");
+      }
+      // The webhook will still settle it; tell the parent it is being confirmed.
+      this.logger.warn(`Could not confirm payment ${paymentId} with ${payment.provider}: ${error instanceof Error ? error.message : String(error)}`);
       return 'created';
     }
   }

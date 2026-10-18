@@ -10,6 +10,25 @@ export class CheckoutDto {
   phone?: string;
 }
 
+/** Razorpay checkout's handler response, sent back by the browser. */
+export class ConfirmCheckoutDto {
+  @IsString()
+  @Matches(/^[a-f0-9]{24}$/, { message: 'Unknown payment.' })
+  paymentId: string;
+
+  @IsString()
+  @Matches(/^order_[A-Za-z0-9]{1,40}$/)
+  razorpayOrderId: string;
+
+  @IsString()
+  @Matches(/^pay_[A-Za-z0-9]{1,40}$/)
+  razorpayPaymentId: string;
+
+  @IsString()
+  @Matches(/^[a-f0-9]{64}$/)
+  razorpaySignature: string;
+}
+
 export class UpdatePlanDto {
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()

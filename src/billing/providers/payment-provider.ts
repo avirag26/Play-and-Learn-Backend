@@ -3,8 +3,9 @@
  * the gateway is picked with PAYMENT_PROVIDER in .env (see payment-provider.factory.ts), so switching
  * between Razorpay, Cashfree and Stripe never touches anything else.
  *
- * Every gateway is used the same way: create a hosted checkout page, send the parent there, and
- * confirm the result both when the browser comes back (fetchStatus) and from the gateway's webhook.
+ * Every gateway is used the same way: create a checkout (a hosted page, or for Razorpay a popup on our
+ * own page), and confirm the result both when the browser comes back (fetchStatus / confirmPopup) and
+ * from the gateway's webhook.
  */
 
 export const paymentProviderNames = ['razorpay', 'cashfree', 'stripe', 'fake'] as const;
@@ -23,12 +24,16 @@ export type CheckoutRequest = {
   returnUrl: string;
 };
 
+/** What the browser needs to open Razorpay's checkout popup on our own page. */
+export type PopupCheckout = { provider: 'razorpay'; keyId: string; orderId: string; amount: number; currency: string };
+
 export type CheckoutSession = {
   /** The gateway's id for this checkout, used to check its status later. */
   providerRef: string;
-  /** Hosted payment page to send the browser to. */
-  url: string;
-};
+} & ({ /** Hosted payment page to send the browser to. */ url: string } | { /** Opened as a popup; the browser then sends proof back to confirmPopup. */ popup: PopupCheckout });
+
+/** What the popup hands back after paying (Razorpay's handler response). */
+export type PopupProof = { orderId: string; paymentId: string; signature: string };
 
 export type ProviderPaymentStatus = 'paid' | 'pending' | 'failed';
 
@@ -45,6 +50,8 @@ export interface PaymentProvider {
   fetchStatus(providerRef: string): Promise<ProviderPaymentStatus>;
   /** Verifies the signature and reads the event. Throws {@link InvalidWebhookError} when it is not from the gateway. */
   parseWebhook(rawBody: Buffer, headers: WebhookHeaders): WebhookEvent;
+  /** Popup gateways only: checks the browser's proof is genuine (throws {@link InvalidWebhookError} if not) and reports the result. */
+  confirmPopup?(providerRef: string, proof: PopupProof): Promise<ProviderPaymentStatus>;
 }
 
 /** Nest injection token for the active provider (null when PAYMENT_PROVIDER is not set). */

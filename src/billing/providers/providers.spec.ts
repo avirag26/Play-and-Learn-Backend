@@ -22,24 +22,50 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Razorpay', () => {
   const razorpay = new RazorpayProvider({ keyId: 'rzp_test_key', keySecret: 'secret', webhookSecret: 'whsec' });
+  const sign = (orderId: string, paymentId: string, secret = 'secret') => createHmac('sha256', secret).update(`${orderId}|${paymentId}`).digest('hex');
 
-  it('creates a payment link in paise and maps its status', async () => {
-    const calls = mockFetch([{ id: 'plink_1', short_url: 'https://rzp.io/i/abc', status: 'created' }, { id: 'plink_1', status: 'paid' }]);
-    expect(await razorpay.createCheckout(request)).toEqual({ providerRef: 'plink_1', url: 'https://rzp.io/i/abc' });
-    expect(calls[0].url).toBe('https://api.razorpay.com/v1/payment_links');
+  it('creates an order for the checkout popup and maps its status', async () => {
+    const calls = mockFetch([{ id: 'order_1', amount: 24_900, currency: 'INR', status: 'created' }, { id: 'order_1', status: 'attempted' }, { id: 'order_1', status: 'paid' }]);
+    expect(await razorpay.createCheckout(request)).toEqual({ providerRef: 'order_1', popup: { provider: 'razorpay', keyId: 'rzp_test_key', orderId: 'order_1', amount: 24_900, currency: 'INR' } });
+    expect(calls[0].url).toBe('https://api.razorpay.com/v1/orders');
     expect(headersOf(calls[0]).Authorization).toBe(`Basic ${Buffer.from('rzp_test_key:secret').toString('base64')}`);
-    expect(jsonBody(calls[0])).toMatchObject({ amount: 24_900, currency: 'INR', reference_id: request.reference, callback_url: request.returnUrl, callback_method: 'get' });
+    expect(jsonBody(calls[0])).toMatchObject({ amount: 24_900, currency: 'INR', receipt: request.reference });
+    expect(await razorpay.fetchStatus('order_1')).toBe('pending');
+    expect(await razorpay.fetchStatus('order_1')).toBe('paid');
+  });
+
+  it('confirms a popup payment only with a genuine signature for the same order', async () => {
+    mockFetch([{ id: 'pay_1', order_id: 'order_1', amount: 24_900, currency: 'INR', status: 'captured' }]);
+    expect(await razorpay.confirmPopup('order_1', { orderId: 'order_1', paymentId: 'pay_1', signature: sign('order_1', 'pay_1') })).toBe('paid');
+    await expect(razorpay.confirmPopup('order_1', { orderId: 'order_1', paymentId: 'pay_1', signature: sign('order_1', 'pay_1', 'wrong') })).rejects.toThrow(InvalidWebhookError);
+    await expect(razorpay.confirmPopup('order_2', { orderId: 'order_1', paymentId: 'pay_1', signature: sign('order_1', 'pay_1') })).rejects.toThrow(InvalidWebhookError);
+    mockFetch([{ id: 'pay_9', order_id: 'order_other', amount: 100, currency: 'INR', status: 'captured' }]);
+    await expect(razorpay.confirmPopup('order_1', { orderId: 'order_1', paymentId: 'pay_9', signature: sign('order_1', 'pay_9') })).rejects.toThrow(InvalidWebhookError);
+  });
+
+  it('captures an authorized payment so the money is actually collected', async () => {
+    const calls = mockFetch([{ id: 'pay_1', order_id: 'order_1', amount: 24_900, currency: 'INR', status: 'authorized' }, { id: 'pay_1', order_id: 'order_1', amount: 24_900, currency: 'INR', status: 'captured' }]);
+    expect(await razorpay.confirmPopup('order_1', { orderId: 'order_1', paymentId: 'pay_1', signature: sign('order_1', 'pay_1') })).toBe('paid');
+    expect(calls[1].url).toBe('https://api.razorpay.com/v1/payments/pay_1/capture');
+    expect(jsonBody(calls[1])).toEqual({ amount: 24_900, currency: 'INR' });
+  });
+
+  it('still settles payment links created before the switch', async () => {
+    const calls = mockFetch([{ id: 'plink_1', status: 'paid' }]);
     expect(await razorpay.fetchStatus('plink_1')).toBe('paid');
+    expect(calls[0].url).toBe('https://api.razorpay.com/v1/payment_links/plink_1');
   });
 
   it('accepts only correctly signed webhooks', () => {
-    const body = Buffer.from(JSON.stringify({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid' } } } }));
-    const signature = createHmac('sha256', 'whsec').update(body).digest('hex');
-    expect(razorpay.parseWebhook(body, { 'x-razorpay-signature': signature })).toEqual({ providerRef: 'plink_1', status: 'paid' });
-    expect(() => razorpay.parseWebhook(body, { 'x-razorpay-signature': signature.replace(/.$/, '0') })).toThrow(InvalidWebhookError);
+    const signed = (event: unknown) => { const body = Buffer.from(JSON.stringify(event)); return [body, { 'x-razorpay-signature': createHmac('sha256', 'whsec').update(body).digest('hex') }] as const; };
+    expect(razorpay.parseWebhook(...signed({ event: 'order.paid', payload: { order: { entity: { id: 'order_1', status: 'paid' } } } }))).toEqual({ providerRef: 'order_1', status: 'paid' });
+    expect(razorpay.parseWebhook(...signed({ event: 'payment.captured', payload: { payment: { entity: { id: 'pay_1', order_id: 'order_1' } } } }))).toEqual({ providerRef: 'order_1', status: 'paid' });
+    expect(razorpay.parseWebhook(...signed({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid' } } } }))).toEqual({ providerRef: 'plink_1', status: 'paid' });
+    expect(razorpay.parseWebhook(...signed({ event: 'payment.failed', payload: { payment: { entity: { id: 'pay_1', order_id: 'order_1' } } } }))).toBeNull();
+    const [body, headers] = signed({ event: 'order.paid', payload: { order: { entity: { id: 'order_1' } } } });
+    expect(() => razorpay.parseWebhook(body, { 'x-razorpay-signature': headers['x-razorpay-signature'].replace(/.$/, '0') })).toThrow(InvalidWebhookError);
     expect(() => razorpay.parseWebhook(body, {})).toThrow(InvalidWebhookError);
-    const other = Buffer.from(JSON.stringify({ event: 'payment.captured', payload: {} }));
-    expect(razorpay.parseWebhook(other, { 'x-razorpay-signature': createHmac('sha256', 'whsec').update(other).digest('hex') })).toBeNull();
+    expect(() => new RazorpayProvider({ keyId: 'k', keySecret: 's' }).parseWebhook(body, headers)).toThrow(InvalidWebhookError);
   });
 
   it('reports gateway errors', async () => {

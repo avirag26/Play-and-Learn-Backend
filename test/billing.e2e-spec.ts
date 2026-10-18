@@ -178,6 +178,22 @@ describe('paying for premium', () => {
     expect((await me(parent)).subscription.currentPeriodEnd).toBe(end);
   });
 
+  it('only lets the paying parent confirm a popup payment, and only with a popup gateway', async () => {
+    const proof = { razorpayOrderId: 'order_ABC123', razorpayPaymentId: 'pay_ABC123', razorpaySignature: 'a'.repeat(64) };
+    const parent = await signedIn('popup@example.com');
+    await http().post('/api/billing/checkout').set('Cookie', parent).send({}).expect(200);
+    const admin = await adminCookies();
+    const latest = (await http().get('/api/admin/payments').set('Cookie', admin).expect(200)).body.payments[0];
+
+    await http().post('/api/billing/checkout/confirm').send({ paymentId: latest.id, ...proof }).expect(401);
+    await http().post('/api/billing/checkout/confirm').set('Cookie', parent).send({ paymentId: latest.id, razorpayOrderId: 'nope' }).expect(400);
+    const stranger = await signedIn('stranger@example.com');
+    await http().post('/api/billing/checkout/confirm').set('Cookie', stranger).send({ paymentId: latest.id, ...proof }).expect(404);
+    // The fake gateway uses a hosted page, not a popup.
+    await http().post('/api/billing/checkout/confirm').set('Cookie', parent).send({ paymentId: latest.id, ...proof }).expect(400);
+    expect((await me(parent)).subscription.status).toBe('none');
+  });
+
   it('stops new purchases when the plan is switched off', async () => {
     const admin = await adminCookies();
     await http().put('/api/admin/plan').set('Cookie', admin).send({ ...validPlan, active: false }).expect(200);

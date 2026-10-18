@@ -2,11 +2,12 @@ import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Injec
 import { ConfigService } from '@nestjs/config';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import type { PaymentStatus } from './payment.schema.js';
 import { CurrentAuth, JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { AccessPayload } from '../auth/tokens.service.js';
 import type { Env } from '../config/env.js';
-import { BillingService, type PublicPlan } from './billing.service.js';
-import { CheckoutDto } from './dto/billing.dto.js';
+import { BillingService, type CheckoutStart, type PublicPlan } from './billing.service.js';
+import { CheckoutDto, ConfirmCheckoutDto } from './dto/billing.dto.js';
 import { FakeProvider } from './providers/fake.provider.js';
 import { InvalidWebhookError, PAYMENT_PROVIDER, type PaymentProvider } from './providers/payment-provider.js';
 
@@ -30,8 +31,17 @@ export class BillingController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  checkout(@CurrentAuth() auth: AccessPayload, @Body() dto: CheckoutDto): Promise<{ url: string }> {
+  checkout(@CurrentAuth() auth: AccessPayload, @Body() dto: CheckoutDto): Promise<CheckoutStart> {
     return this.billing.createCheckout(auth.sub, dto.phone);
+  }
+
+  /** The checkout popup finished: verify what it reported and unlock Premium straight away. */
+  @Post('checkout/confirm')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async confirmCheckout(@CurrentAuth() auth: AccessPayload, @Body() dto: ConfirmCheckoutDto): Promise<{ status: PaymentStatus }> {
+    return { status: await this.billing.confirmPopup(auth.sub, dto.paymentId, { orderId: dto.razorpayOrderId, paymentId: dto.razorpayPaymentId, signature: dto.razorpaySignature }) };
   }
 
   /** The gateway sends the browser here after paying (or giving up); we confirm with the gateway and go back to the app. */
