@@ -38,8 +38,8 @@ export class BillingController {
   @Get('return')
   async returnFromGateway(@Query('ref') ref: unknown, @Res() res: Response): Promise<void> {
     const status = typeof ref === 'string' ? await this.billing.confirmReturn(ref) : 'failed';
-    const result = status === 'paid' ? 'success' : status === 'created' ? 'pending' : 'failed';
-    res.redirect(new URL(`/grown-ups?payment=${result}`, this.config.get('FRONTEND_URL', { infer: true })).toString());
+    const path = status === 'paid' ? '/premium/success' : `/grown-ups?payment=${status === 'created' ? 'pending' : 'failed'}`;
+    res.redirect(new URL(path, this.config.get('FRONTEND_URL', { infer: true })).toString());
   }
 
   /** Gateway → API notification. Needs the exact raw body for signature checks (rawBody is enabled in main.ts). */

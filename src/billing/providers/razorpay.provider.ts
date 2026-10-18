@@ -3,7 +3,8 @@ import { gatewayRequest, header, InvalidWebhookError, type CheckoutRequest, type
 
 type PaymentLink = { id: string; short_url: string; status: 'created' | 'partially_paid' | 'expired' | 'cancelled' | 'paid' };
 
-export type RazorpayConfig = { keyId: string; keySecret: string; webhookSecret: string };
+/** Without webhookSecret, webhooks are rejected and payments are confirmed only when the browser returns. */
+export type RazorpayConfig = { keyId: string; keySecret: string; webhookSecret?: string };
 
 /**
  * Razorpay Payment Links: a hosted page that sends the browser back to `returnUrl`.
@@ -38,6 +39,7 @@ export class RazorpayProvider implements PaymentProvider {
   }
 
   parseWebhook(rawBody: Buffer, headers: WebhookHeaders): WebhookEvent {
+    if (!this.config.webhookSecret) throw new InvalidWebhookError('RAZORPAY_WEBHOOK_SECRET is not set');
     const signature = header(headers, 'x-razorpay-signature') ?? '';
     const expected = createHmac('sha256', this.config.webhookSecret).update(rawBody).digest('hex');
     if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new InvalidWebhookError('Razorpay signature mismatch');

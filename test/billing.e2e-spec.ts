@@ -133,7 +133,7 @@ describe('paying for premium', () => {
     expect(page.text).toContain('₹249.00');
     expect(page.text).toContain('payer@example.com');
 
-    expect(await pay(parent, 'paid')).toBe('http://localhost:3000/grown-ups?payment=success');
+    expect(await pay(parent, 'paid')).toBe('http://localhost:3000/premium/success');
     const first = await me(parent);
     expect(first.subscription).toMatchObject({ status: 'active', plan: 'Premium' });
     const firstEnd = new Date(first.subscription.currentPeriodEnd).getTime();

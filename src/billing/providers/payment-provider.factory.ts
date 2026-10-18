@@ -20,7 +20,7 @@ export function createPaymentProvider(config: ConfigService<Env, true>): Payment
 
   switch (name) {
     case 'razorpay':
-      return new RazorpayProvider({ keyId: need('RAZORPAY_KEY_ID'), keySecret: need('RAZORPAY_KEY_SECRET'), webhookSecret: need('RAZORPAY_WEBHOOK_SECRET') });
+      return new RazorpayProvider({ keyId: need('RAZORPAY_KEY_ID'), keySecret: need('RAZORPAY_KEY_SECRET'), webhookSecret: config.get('RAZORPAY_WEBHOOK_SECRET', { infer: true }) || undefined });
     case 'cashfree':
       return new CashfreeProvider({ appId: need('CASHFREE_APP_ID'), secretKey: need('CASHFREE_SECRET_KEY'), environment: config.get('CASHFREE_ENV', { infer: true }) });
     case 'stripe':
