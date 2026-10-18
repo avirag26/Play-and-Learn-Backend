@@ -8,8 +8,9 @@ export type PaymentStatus = (typeof paymentStatuses)[number];
 /** One checkout attempt. Price and duration are copied from the plan, so later plan edits never change a past payment. */
 @Schema({ timestamps: true })
 export class Payment {
-  @Prop({ type: Types.ObjectId, required: true, index: true })
-  userId: Types.ObjectId;
+  /** Null once the parent deletes their account: the record stays for accounting, with no link to a person. */
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  userId: Types.ObjectId | null;
 
   @Prop({ type: String, enum: paymentProviderNames, required: true })
   provider: PaymentProviderName;

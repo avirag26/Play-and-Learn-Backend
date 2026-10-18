@@ -18,7 +18,7 @@ function layout(body: string): string {
 <div style="max-width:480px;margin:0 auto;padding:32px 24px">
 <p style="font-size:20px;font-weight:bold;margin:0 0 24px">Play &amp; Learn</p>
 <div style="background:#ffffff;border-radius:20px;padding:28px">${body}</div>
-<p style="font-size:12px;color:#6c7e8e;margin-top:24px">You received this email because someone entered this address in the Play &amp; Learn parent area.</p>
+<p style="font-size:12px;color:#6c7e8e;margin-top:24px">You received this email because this address was used in the Play &amp; Learn parent area.</p>
 </div></body></html>`;
 }
 
@@ -81,6 +81,25 @@ export class MailService implements OnApplicationBootstrap {
       html: layout(`<p style="margin:0 0 12px">Someone tried to create a Play &amp; Learn account with this email, but <strong>you already have one</strong>.</p>
 <p style="margin:0 0 12px">Sign in instead, with your password or with <em>Continue with Google</em> if you used Google.</p>
 <p style="margin:0;color:#6c7e8e">If this wasn't you, you can ignore this email.</p>`),
+    });
+  }
+
+  /** Confirms a deletion, so the parent knows if someone else did it. */
+  sendAccountDeleted(to: string, name: string): Promise<void> {
+    return this.send({
+      to,
+      subject: 'Your Play & Learn account has been deleted',
+      text: `Hi ${name},
+
+Your Play & Learn parent account and its personal information have been deleted, as you asked. Any Premium time on it has ended.
+
+Your child's game progress was only ever saved on your device, so it is still there.
+
+If you didn't ask for this, reply to this email straight away.`,
+      html: layout(`<p style="margin:0 0 12px">Hi ${escapeHtml(name)},</p>
+<p style="margin:0 0 12px">Your Play &amp; Learn parent account and its personal information <strong>have been deleted</strong>, as you asked. Any Premium time on it has ended.</p>
+<p style="margin:0 0 12px">Your child's game progress was only ever saved on your device, so it is still there.</p>
+<p style="margin:0;color:#6c7e8e">If you didn't ask for this, reply to this email straight away.</p>`),
     });
   }
 }

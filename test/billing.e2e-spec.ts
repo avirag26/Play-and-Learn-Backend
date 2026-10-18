@@ -7,6 +7,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import type { UsersService } from '../src/users/users.service.js';
+import { getConnectionToken } from '@nestjs/mongoose';
+import { Types } from 'mongoose';
 
 let mongo: MongoMemoryServer;
 let app: INestApplication<App>;
@@ -213,6 +215,61 @@ describe('paying for premium', () => {
     expect(overview.activePremium).toBe(2);
     expect(overview.payments[0]).toMatchObject({ provider: 'fake', currency: 'INR' });
     expect(overview.payments.map((payment: { email: string }) => payment.email)).toContain('payer@example.com');
+  });
+});
+
+describe('deleting an account', () => {
+  const count = (collection: string, filter: object) => app.get<{ collection: (name: string) => { countDocuments: (query: object) => Promise<number> } }>(getConnectionToken()).collection(collection).countDocuments(filter);
+
+  it('removes the parent and their sessions everywhere, and unlinks their payments', async () => {
+    const parent = await signedIn('leaving@example.com');
+    await pay(parent, 'paid');
+    const { id } = await me(parent);
+    const refresh = parent.find((cookie) => cookie.startsWith('pl_refresh='))!;
+    const userId = new Types.ObjectId(id as string);
+    expect(await count('payments', { userId })).toBe(1);
+    expect(await count('refreshtokens', { userId })).toBeGreaterThan(0);
+
+    await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).send({ password: 'a long password' }).expect(401);
+    await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', parent).send({}).expect(400);
+    await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', parent).send({ password: 'wrong password' }).expect(403);
+    expect(await users.findById(id as string)).not.toBeNull();
+
+    const res = await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', parent).send({ password: 'a long password' }).expect(204);
+    expect(([] as string[]).concat(res.headers['set-cookie'] ?? []).some((line) => line.startsWith('pl_refresh=;'))).toBe(true);
+
+    expect(await users.findById(id as string)).toBeNull();
+    expect(await count('users', { email: 'leaving@example.com' })).toBe(0);
+    expect(await count('refreshtokens', { userId })).toBe(0);
+    expect(await count('payments', { userId })).toBe(0);
+    expect(await count('payments', { userId: null, status: 'paid' })).toBeGreaterThan(0);
+    // Old cookies and the password no longer work.
+    await http().get('/api/auth/me').set('Cookie', parent).expect(401);
+    await http().post('/api/auth/refresh').set('Cookie', refresh).expect(401);
+    await http().post('/api/auth/login').set('X-Forwarded-For', newIp()).send({ email: 'leaving@example.com', password: 'a long password' }).expect(401);
+    // Admins still see the sale, without a person attached.
+    const admin = await adminCookies();
+    const payments = (await http().get('/api/admin/payments').set('Cookie', admin).expect(200)).body.payments as { email: string | null; status: string }[];
+    expect(payments.some((payment) => payment.email === null && payment.status === 'paid')).toBe(true);
+    // The same email can start over.
+    await signedIn('leaving@example.com');
+  });
+
+  it('asks Google-only parents to type their email instead of a password', async () => {
+    const google = await users.upsertFromGoogle({ googleId: 'g-123', email: 'google-parent@example.com', name: 'Google Parent', avatarUrl: null });
+    const { AuthService } = await import('../src/auth/auth.service.js');
+    const session = await app.get(AuthService).signIn(google, { userAgent: null, ip: null });
+    const cookies = [`pl_access=${session.accessToken}`];
+    await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', cookies).send({ email: 'someone-else@example.com' }).expect(400);
+    await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', cookies).send({ email: ' Google-Parent@example.com ' }).expect(204);
+    expect(await count('users', { googleId: 'g-123' })).toBe(0);
+  });
+
+  it('never deletes the last admin', async () => {
+    const admin = await adminCookies();
+    const res = await http().post('/api/account/delete').set('X-Forwarded-For', newIp()).set('Cookie', admin).send({ password: 'a long password' }).expect(409);
+    expect(res.body.message).toMatch(/only admin/);
+    expect(await count('users', { email: ADMIN })).toBe(1);
   });
 });
 

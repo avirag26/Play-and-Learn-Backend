@@ -8,6 +8,7 @@ import { BillingModule } from './billing/billing.module.js';
 import { validateEnv, type Env } from './config/env.js';
 import { HealthController } from './health.controller.js';
 import { UsersModule } from './users/users.module.js';
+import { AccountModule } from './account/account.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { UsersModule } from './users/users.module.js';
     UsersModule,
     AuthModule,
     BillingModule,
+    AccountModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

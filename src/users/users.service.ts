@@ -45,6 +45,19 @@ export class UsersService {
     return this.users.findOneAndUpdate({ email: email.toLowerCase() }, { $set: { role } }, { returnDocument: 'after' }).exec();
   }
 
+  /** Includes the password hash, for confirming who is deleting an account. */
+  findByIdWithPassword(id: string): Promise<UserDocument | null> {
+    return this.users.findById(id).select('+passwordHash').exec();
+  }
+
+  countAdmins(): Promise<number> {
+    return this.users.countDocuments({ role: 'admin' }).exec();
+  }
+
+  async deleteById(id: string): Promise<boolean> {
+    return (await this.users.deleteOne({ _id: id }).exec()).deletedCount === 1;
+  }
+
   listAdmins(): Promise<UserDocument[]> {
     return this.users.find({ role: 'admin' }).sort({ email: 1 }).exec();
   }

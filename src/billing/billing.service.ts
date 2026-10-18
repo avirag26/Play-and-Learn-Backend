@@ -155,7 +155,8 @@ export class BillingService {
     }
     // A failed attempt can still turn out paid (e.g. a late bank confirmation), so only "paid" is final.
     const claimed = await this.payments.updateOne({ _id: payment._id, status: { $ne: 'paid' } }, { $set: { status: 'paid', paidAt: new Date() } }).exec();
-    if (claimed.modifiedCount === 1) {
+    // A deleted account has nobody left to give Premium to.
+    if (claimed.modifiedCount === 1 && payment.userId) {
       await this.users.extendPremium(String(payment.userId), payment.planName, payment.durationDays);
       this.logger.log(`Payment ${payment.id as string} paid: ${payment.durationDays} days of Premium for user ${String(payment.userId)}`);
     }
@@ -168,13 +169,13 @@ export class BillingService {
       this.users.countActivePremium(),
       this.payments.aggregate<{ _id: string; amount: number; count: number }>([{ $match: { status: 'paid' } }, { $group: { _id: '$currency', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]).exec(),
     ]);
-    const emails = await this.users.emailsByIds([...new Set(recent.map((payment) => String(payment.userId)))]);
+    const emails = await this.users.emailsByIds([...new Set(recent.flatMap((payment) => payment.userId ? [String(payment.userId)] : []))]);
     return {
       activePremium,
       paidCount: totals.reduce((sum, total) => sum + total.count, 0),
       revenue: totals.map((total) => ({ currency: total._id, amount: total.amount })),
       provider: this.providerName,
-      payments: recent.map((payment) => ({ id: String(payment._id), email: emails.get(String(payment.userId)) ?? null, provider: payment.provider, amount: payment.amount, currency: payment.currency, durationDays: payment.durationDays, status: payment.status, createdAt: payment.createdAt.toISOString(), paidAt: payment.paidAt?.toISOString() ?? null })),
+      payments: recent.map((payment) => ({ id: String(payment._id), email: payment.userId ? emails.get(String(payment.userId)) ?? null : null, provider: payment.provider, amount: payment.amount, currency: payment.currency, durationDays: payment.durationDays, status: payment.status, createdAt: payment.createdAt.toISOString(), paidAt: payment.paidAt?.toISOString() ?? null })),
     };
   }
 }
