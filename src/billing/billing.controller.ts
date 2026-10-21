@@ -41,7 +41,8 @@ export class BillingController {
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async confirmCheckout(@CurrentAuth() auth: AccessPayload, @Body() dto: ConfirmCheckoutDto): Promise<{ status: PaymentStatus }> {
-    return { status: await this.billing.confirmPopup(auth.sub, dto.paymentId, { orderId: dto.razorpayOrderId, paymentId: dto.razorpayPaymentId, signature: dto.razorpaySignature }) };
+    const proof = dto.razorpayOrderId && dto.razorpayPaymentId && dto.razorpaySignature ? { orderId: dto.razorpayOrderId, paymentId: dto.razorpayPaymentId, signature: dto.razorpaySignature } : undefined;
+    return { status: await this.billing.confirmPopup(auth.sub, dto.paymentId, proof) };
   }
 
   /** The gateway sends the browser here after paying (or giving up); we confirm with the gateway and go back to the app. */

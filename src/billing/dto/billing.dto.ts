@@ -10,23 +10,26 @@ export class CheckoutDto {
   phone?: string;
 }
 
-/** Razorpay checkout's handler response, sent back by the browser. */
+/** Sent by the browser when the checkout popup finishes. The razorpay* fields are Razorpay's signed handler response; Cashfree sends none. */
 export class ConfirmCheckoutDto {
   @IsString()
   @Matches(/^[a-f0-9]{24}$/, { message: 'Unknown payment.' })
   paymentId: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^order_[A-Za-z0-9]{1,40}$/)
-  razorpayOrderId: string;
+  razorpayOrderId?: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^pay_[A-Za-z0-9]{1,40}$/)
-  razorpayPaymentId: string;
+  razorpayPaymentId?: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^[a-f0-9]{64}$/)
-  razorpaySignature: string;
+  razorpaySignature?: string;
 }
 
 export class UpdatePlanDto {

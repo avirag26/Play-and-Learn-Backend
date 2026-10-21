@@ -114,7 +114,7 @@ export class BillingService {
    * The popup reported a payment: check its proof with the gateway and settle. Only the parent who
    * started the payment can confirm it.
    */
-  async confirmPopup(userId: string, paymentId: string, proof: PopupProof): Promise<PaymentStatus> {
+  async confirmPopup(userId: string, paymentId: string, proof?: PopupProof): Promise<PaymentStatus> {
     if (!isValidObjectId(paymentId)) throw new NotFoundException('Payment not found.');
     const payment = await this.payments.findOne({ _id: paymentId, userId: new Types.ObjectId(userId) }).exec();
     if (!payment) throw new NotFoundException('Payment not found.');

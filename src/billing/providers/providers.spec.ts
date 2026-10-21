@@ -77,30 +77,40 @@ describe('Razorpay', () => {
 describe('Cashfree', () => {
   const cashfree = new CashfreeProvider({ appId: 'app', secretKey: 'cf-secret', environment: 'sandbox' });
 
-  it('creates a payment link in rupees on the sandbox and needs a phone number', async () => {
-    const calls = mockFetch([{ link_id: request.reference, link_url: 'https://payments-test.cashfree.com/links/x', link_status: 'ACTIVE' }, { link_status: 'PAID' }]);
-    expect(await cashfree.createCheckout(request)).toEqual({ providerRef: request.reference, url: 'https://payments-test.cashfree.com/links/x' });
-    expect(calls[0].url).toBe('https://sandbox.cashfree.com/pg/links');
+  it('creates an order for the checkout popup in rupees on the sandbox, and needs a phone number', async () => {
+    const calls = mockFetch([{ order_id: request.reference, payment_session_id: 'session_abc', order_status: 'ACTIVE' }]);
+    expect(await cashfree.createCheckout(request)).toEqual({ providerRef: request.reference, popup: { provider: 'cashfree', mode: 'sandbox', paymentSessionId: 'session_abc', orderId: request.reference } });
+    expect(calls[0].url).toBe('https://sandbox.cashfree.com/pg/orders');
     expect(headersOf(calls[0])).toMatchObject({ 'x-client-id': 'app', 'x-client-secret': 'cf-secret', 'x-api-version': '2023-08-01' });
-    expect(jsonBody(calls[0])).toMatchObject({ link_id: request.reference, link_amount: 249, link_currency: 'INR', customer_details: { customer_phone: '9876543210' }, link_meta: { return_url: request.returnUrl } });
-    expect(await cashfree.fetchStatus(request.reference)).toBe('paid');
+    expect(jsonBody(calls[0])).toMatchObject({ order_id: request.reference, order_amount: 249, order_currency: 'INR', customer_details: { customer_id: 'user-1', customer_phone: '9876543210' }, order_meta: { return_url: request.returnUrl } });
     await expect(cashfree.createCheckout({ ...request, customer: { ...request.customer, phone: undefined } })).rejects.toThrow(/phone/);
   });
 
-  it('accepts only fresh, correctly signed webhooks', () => {
-    const body = Buffer.from(JSON.stringify({ type: 'PAYMENT_LINK_EVENT', data: { link_id: 'link-1', link_status: 'PAID' } }));
-    const sign = (timestamp: string) => createHmac('sha256', 'cf-secret').update(timestamp).update(body).digest('base64');
+  it('confirms the popup by asking Cashfree for the order status', async () => {
+    const calls = mockFetch([{ order_status: 'PAID' }, { order_status: 'ACTIVE' }, { order_status: 'EXPIRED' }, { order_status: 'TERMINATED' }]);
+    expect(await cashfree.confirmPopup(request.reference)).toBe('paid');
+    expect(calls[0].url).toBe(`https://sandbox.cashfree.com/pg/orders/${request.reference}`);
+    expect(await cashfree.fetchStatus(request.reference)).toBe('pending');
+    expect(await cashfree.fetchStatus(request.reference)).toBe('failed');
+    expect(await cashfree.fetchStatus(request.reference)).toBe('failed');
+  });
+
+  it('accepts only fresh, correctly signed payment webhooks', () => {
+    const body = Buffer.from(JSON.stringify({ type: 'PAYMENT_SUCCESS_WEBHOOK', data: { order: { order_id: 'order-1' }, payment: { payment_status: 'SUCCESS' } } }));
+    const sign = (timestamp: string, payload = body) => createHmac('sha256', 'cf-secret').update(timestamp).update(payload).digest('base64');
     const now = String(Date.now());
-    expect(cashfree.parseWebhook(body, { 'x-webhook-timestamp': now, 'x-webhook-signature': sign(now) })).toEqual({ providerRef: 'link-1', status: 'paid' });
+    expect(cashfree.parseWebhook(body, { 'x-webhook-timestamp': now, 'x-webhook-signature': sign(now) })).toEqual({ providerRef: 'order-1', status: 'paid' });
     expect(() => cashfree.parseWebhook(body, { 'x-webhook-timestamp': now, 'x-webhook-signature': sign('1') })).toThrow(InvalidWebhookError);
     const old = String(Date.now() - 10 * 60 * 1000);
     expect(() => cashfree.parseWebhook(body, { 'x-webhook-timestamp': old, 'x-webhook-signature': sign(old) })).toThrow(/too old/);
+    const failed = Buffer.from(JSON.stringify({ type: 'PAYMENT_FAILED_WEBHOOK', data: { order: { order_id: 'order-1' }, payment: { payment_status: 'FAILED' } } }));
+    expect(cashfree.parseWebhook(failed, { 'x-webhook-timestamp': now, 'x-webhook-signature': sign(now, failed) })).toBeNull();
   });
 
-  it('uses the live API in production', async () => {
-    const calls = mockFetch([{ link_status: 'EXPIRED' }]);
-    expect(await new CashfreeProvider({ appId: 'a', secretKey: 's', environment: 'production' }).fetchStatus('x')).toBe('failed');
-    expect(calls[0].url).toBe('https://api.cashfree.com/pg/links/x');
+  it('uses the production API in production', async () => {
+    const calls = mockFetch([{ order_status: 'ACTIVE' }]);
+    expect(await new CashfreeProvider({ appId: 'a', secretKey: 's', environment: 'production' }).fetchStatus('x')).toBe('pending');
+    expect(calls[0].url).toBe('https://api.cashfree.com/pg/orders/x');
   });
 });
 

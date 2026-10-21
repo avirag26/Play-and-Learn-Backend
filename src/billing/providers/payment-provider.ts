@@ -24,15 +24,17 @@ export type CheckoutRequest = {
   returnUrl: string;
 };
 
-/** What the browser needs to open Razorpay's checkout popup on our own page. */
-export type PopupCheckout = { provider: 'razorpay'; keyId: string; orderId: string; amount: number; currency: string };
+/** What the browser needs to open the gateway's checkout popup on our own page. */
+export type PopupCheckout =
+  | { provider: 'razorpay'; keyId: string; orderId: string; amount: number; currency: string }
+  | { provider: 'cashfree'; mode: 'sandbox' | 'production'; paymentSessionId: string; orderId: string };
 
 export type CheckoutSession = {
   /** The gateway's id for this checkout, used to check its status later. */
   providerRef: string;
 } & ({ /** Hosted payment page to send the browser to. */ url: string } | { /** Opened as a popup; the browser then sends proof back to confirmPopup. */ popup: PopupCheckout });
 
-/** What the popup hands back after paying (Razorpay's handler response). */
+/** What Razorpay's popup hands back after paying. Cashfree sends nothing: we ask Cashfree directly. */
 export type PopupProof = { orderId: string; paymentId: string; signature: string };
 
 export type ProviderPaymentStatus = 'paid' | 'pending' | 'failed';
@@ -50,8 +52,8 @@ export interface PaymentProvider {
   fetchStatus(providerRef: string): Promise<ProviderPaymentStatus>;
   /** Verifies the signature and reads the event. Throws {@link InvalidWebhookError} when it is not from the gateway. */
   parseWebhook(rawBody: Buffer, headers: WebhookHeaders): WebhookEvent;
-  /** Popup gateways only: checks the browser's proof is genuine (throws {@link InvalidWebhookError} if not) and reports the result. */
-  confirmPopup?(providerRef: string, proof: PopupProof): Promise<ProviderPaymentStatus>;
+  /** Popup gateways only: checks the payment with the gateway (and the browser's proof, if it sends one; throws {@link InvalidWebhookError} if forged) and reports the result. */
+  confirmPopup?(providerRef: string, proof?: PopupProof): Promise<ProviderPaymentStatus>;
 }
 
 /** Nest injection token for the active provider (null when PAYMENT_PROVIDER is not set). */

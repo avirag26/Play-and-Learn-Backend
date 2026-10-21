@@ -42,7 +42,8 @@ export class RazorpayProvider implements PaymentProvider {
    * Checks Razorpay's signature over "order_id|payment_id" (signed with our key secret, so the browser
    * can't forge it), then makes sure the money is actually captured.
    */
-  async confirmPopup(providerRef: string, proof: PopupProof): Promise<ProviderPaymentStatus> {
+  async confirmPopup(providerRef: string, proof?: PopupProof): Promise<ProviderPaymentStatus> {
+    if (!proof) throw new InvalidWebhookError('Razorpay checkout proof is missing');
     const expected = createHmac('sha256', this.config.keySecret).update(`${proof.orderId}|${proof.paymentId}`).digest('hex');
     if (proof.orderId !== providerRef || !safeEqual(proof.signature, expected)) throw new InvalidWebhookError('Razorpay checkout signature mismatch');
     let payment = await this.call<Payment>('GET', `/payments/${encodeURIComponent(proof.paymentId)}`);
