@@ -1,6 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { CashfreeProvider } from './cashfree.provider.js';
 import { InvalidWebhookError, PaymentGatewayError, type CheckoutRequest } from './payment-provider.js';
+import { PayuProvider } from './payu.provider.js';
 import { RazorpayProvider } from './razorpay.provider.js';
 import { StripeProvider } from './stripe.provider.js';
 
@@ -140,5 +141,48 @@ describe('Stripe', () => {
     expect(() => stripe.parseWebhook(body, { 'stripe-signature': `t=${t - 600},v1=${sign(t - 600)}` })).toThrow(/too old/);
     const expired = Buffer.from(JSON.stringify({ type: 'checkout.session.expired', data: { object: { id: 'cs_2', status: 'expired', payment_status: 'unpaid' } } }));
     expect(stripe.parseWebhook(expired, { 'stripe-signature': `t=${t},v1=${createHmac('sha256', 'whsec_123').update(`${t}.`).update(expired).digest('hex')}` })).toEqual({ providerRef: 'cs_2', status: 'failed' });
+  });
+});
+
+describe('PayU', () => {
+  const payu = new PayuProvider({ merchantKey: 'mkey', merchantSalt: 'msalt', environment: 'production' });
+  const sha512 = (text: string) => createHash('sha512').update(text).digest('hex');
+  const ref = request.reference;
+
+  it('signs a hosted checkout form for the live page in rupees, and needs a phone number', async () => {
+    const session = await payu.createCheckout({ ...request, customer: { ...request.customer, name: 'Sam <O\'Neil>', phone: '+919876543210' } });
+    expect(session).toMatchObject({ providerRef: ref, form: { action: 'https://secure.payu.in/_payment' } });
+    if (!('form' in session)) throw new Error('expected a form');
+    const fields = session.form.fields;
+    expect(fields).toMatchObject({ key: 'mkey', txnid: ref, amount: '249.00', productinfo: 'Premium 30 days', firstname: 'Sam O Neil', email: 'parent@example.com', phone: '9876543210', udf1: 'user-1', surl: request.returnUrl, furl: request.returnUrl });
+    // PayU's documented formula: key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
+    expect(fields.hash).toBe(sha512(`mkey|${ref}|249.00|Premium 30 days|Sam O Neil|parent@example.com|user-1||||||||||msalt`));
+    await expect(payu.createCheckout({ ...request, customer: { ...request.customer, phone: undefined } })).rejects.toThrow(PaymentGatewayError);
+    const test = await new PayuProvider({ merchantKey: 'k', merchantSalt: 's', environment: 'test' }).createCheckout(request);
+    expect('form' in test && test.form.action).toBe('https://test.payu.in/_payment');
+  });
+
+  it('asks verify_payment for the result', async () => {
+    const calls = mockFetch([{ status: 1, transaction_details: { [ref]: { txnid: ref, status: 'success' } } }, { status: 1, transaction_details: { [ref]: { status: 'failure' } } }, { status: 0, transaction_details: { [ref]: { status: 'Not Found' } } }, { status: 0, msg: 'Invalid Hash.' }]);
+    expect(await payu.fetchStatus(ref)).toBe('paid');
+    expect(calls[0].url).toBe('https://info.payu.in/merchant/postservice.php?form=2');
+    expect(Object.fromEntries(new URLSearchParams(calls[0].init.body as string))).toEqual({ key: 'mkey', command: 'verify_payment', var1: ref, hash: sha512(`mkey|verify_payment|${ref}|msalt`) });
+    expect(await payu.fetchStatus(ref)).toBe('failed');
+    expect(await payu.fetchStatus(ref)).toBe('pending');
+    await expect(payu.fetchStatus(ref)).rejects.toThrow(PaymentGatewayError);
+  });
+
+  it('accepts only webhooks with a genuine reverse hash', () => {
+    const base = { key: 'mkey', txnid: ref, amount: '249.00', productinfo: 'Premium 30 days', firstname: 'Sam', email: 'parent@example.com', udf1: 'user-1', mihpayid: '403993715531' };
+    // SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+    const reverse = (status: string) => sha512(`msalt|${status}${'|'.repeat(10)}user-1|parent@example.com|Sam|Premium 30 days|249.00|${ref}|mkey`);
+    const form = (fields: Record<string, string>) => Buffer.from(new URLSearchParams(fields).toString());
+    expect(payu.parseWebhook(form({ ...base, status: 'success', hash: reverse('success') }))).toEqual({ providerRef: ref, status: 'paid' });
+    expect(payu.parseWebhook(Buffer.from(JSON.stringify({ ...base, status: 'failure', hash: reverse('failure') })))).toEqual({ providerRef: ref, status: 'failed' });
+    expect(payu.parseWebhook(form({ ...base, status: 'success', additionalCharges: '5.00', hash: sha512(`5.00|msalt|success${'|'.repeat(10)}user-1|parent@example.com|Sam|Premium 30 days|249.00|${ref}|mkey`) }))).toEqual({ providerRef: ref, status: 'paid' });
+    expect(payu.parseWebhook(form({ ...base, status: 'pending', hash: reverse('pending') }))).toBeNull();
+    expect(() => payu.parseWebhook(form({ ...base, status: 'success', hash: reverse('failure') }))).toThrow(InvalidWebhookError);
+    expect(() => payu.parseWebhook(form({ ...base, amount: '1.00', status: 'success', hash: reverse('success') }))).toThrow(InvalidWebhookError);
+    expect(() => payu.parseWebhook(form({ ...base, status: 'success' }))).toThrow(InvalidWebhookError);
   });
 });

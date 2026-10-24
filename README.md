@@ -60,18 +60,19 @@ One Premium plan, edited in the admin app (`../play-and-learn-admin`): name, pri
 | Method | Path | |
 | --- | --- | --- |
 | GET | `/billing/plan` | Public: price, duration, `premiumGameIds`, `available` |
-| POST | `/billing/checkout` | Signed in: `{ phone? }` → `{ url }` of the gateway's hosted payment page |
-| GET | `/billing/return?ref=` | The gateway sends the browser here; we ask the gateway for the result and redirect to `/grown-ups?payment=success|pending|failed` |
+| POST | `/billing/checkout` | Signed in: `{ phone? }` → `{ url }` of the gateway's hosted payment page, `{ form }` to post to it (PayU), or `{ paymentId, popup }` |
+| GET / POST | `/billing/return?ref=` | The gateway sends the browser here (PayU with a POST); we ask the gateway for the result and redirect to `/grown-ups?payment=success|pending|failed` |
 | POST | `/billing/webhook` | Gateway notifications (signature-checked against the raw body) |
 | GET / PUT | `/admin/plan` | Admin: read / save the plan |
 | GET | `/admin/payments` | Admin: active Premium count, revenue, last 50 payments |
 
-**Switching gateway is one line in `.env`:** `PAYMENT_PROVIDER=razorpay | cashfree | stripe` plus that gateway's keys. Each gateway is one file in `src/billing/providers/` implementing the `PaymentProvider` interface (`payment-provider.ts`); `payment-provider.factory.ts` picks one. All three use a hosted payment page (Razorpay Payment Links, Cashfree Payment Links, Stripe Checkout), so nothing else changes. Cashfree also needs the parent's mobile number; the app asks for it only then.
+**Switching gateway is one line in `.env`:** `PAYMENT_PROVIDER=payu | razorpay | cashfree | stripe` plus that gateway's keys. Each gateway is one file in `src/billing/providers/` implementing the `PaymentProvider` interface (`payment-provider.ts`); `payment-provider.factory.ts` picks one. All three use a hosted payment page (Razorpay Payment Links, Cashfree Payment Links, Stripe Checkout), so nothing else changes. Cashfree also needs the parent's mobile number; the app asks for it only then.
 
 `PAYMENT_PROVIDER=fake` is a local test gateway with Pay / Fail buttons and no real money; the API refuses it in production.
 
 A payment is confirmed twice: when the browser returns (the API asks the gateway), and by the gateway's webhook (in case the browser never comes back). Premium is granted exactly once per payment. Register the webhook URL `https://<your-domain>/api/billing/webhook` in the gateway dashboard:
 
+- **PayU**: Hosted Checkout (the app posts a form signed with the salt to PayU, which needs the parent's mobile number). Keys `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT` (Salt v1); `PAYU_ENV=production` for the live account, `test` with test keys. Webhooks: Successful and Failed payment events, verified with PayU's reverse hash. `FRONTEND_URL` must be the public https site, because PayU posts the browser back to it.
 - **Razorpay**: event `payment_link.paid` (optionally `payment_link.expired`, `payment_link.cancelled`); its secret is `RAZORPAY_WEBHOOK_SECRET`.
 - **Cashfree**: Payment Link events; signed with `CASHFREE_SECRET_KEY`. Use `CASHFREE_ENV=sandbox` with test keys.
 - **Stripe**: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`; secret `STRIPE_WEBHOOK_SECRET`.

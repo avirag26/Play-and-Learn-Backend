@@ -3,6 +3,7 @@ import type { Env } from '../../config/env.js';
 import { CashfreeProvider } from './cashfree.provider.js';
 import { FakeProvider } from './fake.provider.js';
 import type { PaymentProvider } from './payment-provider.js';
+import { PayuProvider } from './payu.provider.js';
 import { RazorpayProvider } from './razorpay.provider.js';
 import { StripeProvider } from './stripe.provider.js';
 
@@ -25,6 +26,8 @@ export function createPaymentProvider(config: ConfigService<Env, true>): Payment
       return new CashfreeProvider({ appId: need('CASHFREE_APP_ID'), secretKey: need('CASHFREE_SECRET_KEY'), environment: config.get('CASHFREE_ENV', { infer: true }) });
     case 'stripe':
       return new StripeProvider({ secretKey: need('STRIPE_SECRET_KEY'), webhookSecret: need('STRIPE_WEBHOOK_SECRET') });
+    case 'payu':
+      return new PayuProvider({ merchantKey: need('PAYU_MERCHANT_KEY'), merchantSalt: need('PAYU_MERCHANT_SALT'), environment: config.get('PAYU_ENV', { infer: true }) });
     case 'fake':
       if (config.get('NODE_ENV', { infer: true }) === 'production') throw new Error('PAYMENT_PROVIDER=fake is for development only');
       return new FakeProvider(new URL('/api/billing/fake-checkout', config.get('FRONTEND_URL', { infer: true })).toString());

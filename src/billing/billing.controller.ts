@@ -49,8 +49,24 @@ export class BillingController {
   @Get('return')
   async returnFromGateway(@Query('ref') ref: unknown, @Res() res: Response): Promise<void> {
     const status = typeof ref === 'string' ? await this.billing.confirmReturn(ref) : 'failed';
+    res.redirect(this.resultUrl(status));
+  }
+
+  /**
+   * PayU posts the browser back here instead. What it posts is not trusted: the result comes from
+   * PayU's verify API. Its txnid is our payment id, in case the query string is lost.
+   */
+  @Post('return')
+  async postReturnFromGateway(@Query('ref') ref: unknown, @Body('txnid') txnid: unknown, @Res() res: Response): Promise<void> {
+    const id = typeof ref === 'string' ? ref : typeof txnid === 'string' ? txnid : null;
+    const status = id ? await this.billing.confirmReturn(id) : 'failed';
+    // 303 so the browser follows with a GET.
+    res.redirect(303, this.resultUrl(status));
+  }
+
+  private resultUrl(status: PaymentStatus): string {
     const path = status === 'paid' ? '/premium/success' : `/grown-ups?payment=${status === 'created' ? 'pending' : 'failed'}`;
-    res.redirect(new URL(path, this.config.get('FRONTEND_URL', { infer: true })).toString());
+    return new URL(path, this.config.get('FRONTEND_URL', { infer: true })).toString();
   }
 
   /** Gateway → API notification. Needs the exact raw body for signature checks (rawBody is enabled in main.ts). */

@@ -8,7 +8,7 @@
  * from the gateway's webhook.
  */
 
-export const paymentProviderNames = ['razorpay', 'cashfree', 'stripe', 'fake'] as const;
+export const paymentProviderNames = ['razorpay', 'cashfree', 'stripe', 'payu', 'fake'] as const;
 export type PaymentProviderName = (typeof paymentProviderNames)[number];
 
 export type CheckoutRequest = {
@@ -29,10 +29,13 @@ export type PopupCheckout =
   | { provider: 'razorpay'; keyId: string; orderId: string; amount: number; currency: string }
   | { provider: 'cashfree'; mode: 'sandbox' | 'production'; paymentSessionId: string; orderId: string };
 
+/** A hosted payment page that must be opened with a signed form POST (PayU) rather than a plain link. */
+export type HostedForm = { action: string; fields: Record<string, string> };
+
 export type CheckoutSession = {
   /** The gateway's id for this checkout, used to check its status later. */
   providerRef: string;
-} & ({ /** Hosted payment page to send the browser to. */ url: string } | { /** Opened as a popup; the browser then sends proof back to confirmPopup. */ popup: PopupCheckout });
+} & ({ /** Hosted payment page to send the browser to. */ url: string } | { /** Hosted payment page the browser posts this form to. */ form: HostedForm } | { /** Opened as a popup; the browser then sends proof back to confirmPopup. */ popup: PopupCheckout });
 
 /** What Razorpay's popup hands back after paying. Cashfree sends nothing: we ask Cashfree directly. */
 export type PopupProof = { orderId: string; paymentId: string; signature: string };
@@ -46,7 +49,7 @@ export type WebhookHeaders = Record<string, string | string[] | undefined>;
 
 export interface PaymentProvider {
   readonly name: PaymentProviderName;
-  /** Cashfree requires the customer's phone number; the others do not. */
+  /** Cashfree and PayU require the customer's phone number; the others do not. */
   readonly requiresPhone: boolean;
   createCheckout(request: CheckoutRequest): Promise<CheckoutSession>;
   fetchStatus(providerRef: string): Promise<ProviderPaymentStatus>;

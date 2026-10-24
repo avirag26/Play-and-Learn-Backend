@@ -8,7 +8,7 @@ import type { UpdatePlanDto } from './dto/billing.dto.js';
 import { gameCatalog } from './game-catalog.js';
 import { Payment, type PaymentDocument, type PaymentStatus } from './payment.schema.js';
 import { defaultPlan, PLAN_KEY, PlanSettings } from './plan-settings.schema.js';
-import { InvalidWebhookError, PAYMENT_PROVIDER, type PaymentProvider, type PopupCheckout, type PopupProof, type WebhookHeaders } from './providers/payment-provider.js';
+import { InvalidWebhookError, PAYMENT_PROVIDER, type HostedForm, type PaymentProvider, type PopupCheckout, type PopupProof, type WebhookHeaders } from './providers/payment-provider.js';
 
 export type Plan = typeof defaultPlan & { updatedAt: string | null; updatedBy: string | null };
 
@@ -24,8 +24,8 @@ export type PublicPlan = {
   requiresPhone: boolean;
 };
 
-/** Either a page to send the browser to, or what it needs to open the gateway's popup. */
-export type CheckoutStart = { url: string } | { paymentId: string; popup: PopupCheckout & { name: string; description: string; prefill: { name: string; email: string } } };
+/** A page to send the browser to, a form for it to post to the gateway, or what it needs to open the gateway's popup. */
+export type CheckoutStart = { url: string } | { form: HostedForm } | { paymentId: string; popup: PopupCheckout & { name: string; description: string; prefill: { name: string; email: string } } };
 
 export type AdminPayment = { id: string; email: string | null; provider: string; amount: number; currency: string; durationDays: number; status: PaymentStatus; createdAt: string; paidAt: string | null };
 export type AdminOverview = { activePremium: number; paidCount: number; revenue: { currency: string; amount: number }[]; payments: AdminPayment[]; provider: string | null };
@@ -86,7 +86,8 @@ export class BillingService {
         returnUrl: new URL(`/api/billing/return?ref=${payment.id as string}`, this.config.get('FRONTEND_URL', { infer: true })).toString(),
       });
       await this.payments.updateOne({ _id: payment._id }, { $set: { providerRef: session.providerRef } }).exec();
-      return 'popup' in session ? { paymentId: payment.id as string, popup: { ...session.popup, name: plan.name, description, prefill: { name: user.name, email: user.email } } } : { url: session.url };
+      if ('popup' in session) return { paymentId: payment.id as string, popup: { ...session.popup, name: plan.name, description, prefill: { name: user.name, email: user.email } } };
+      return 'form' in session ? { form: session.form } : { url: session.url };
     } catch (error) {
       await this.payments.updateOne({ _id: payment._id }, { $set: { status: 'failed' } }).exec();
       this.logger.error(`Could not start a ${this.provider.name} checkout`, error instanceof Error ? error.message : String(error));

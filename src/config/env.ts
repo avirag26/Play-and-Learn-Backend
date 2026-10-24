@@ -137,6 +137,18 @@ export class Env {
 
   @IsOptional()
   @IsString()
+  PAYU_MERCHANT_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  PAYU_MERCHANT_SALT?: string;
+
+  /** "production" takes real money on secure.payu.in; "test" uses test.payu.in with test keys. */
+  @IsIn(['test', 'production'])
+  PAYU_ENV: 'test' | 'production' = 'test';
+
+  @IsOptional()
+  @IsString()
   STRIPE_SECRET_KEY?: string;
 
   @IsOptional()
