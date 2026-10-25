@@ -8,6 +8,7 @@ export const gameCatalog = [
   { id: 'color-quest', title: 'Color Quest', emoji: '🎨' },
   { id: 'count-the-stars', title: 'Count the Stars', emoji: '⭐' },
   { id: 'shape-safari', title: 'Shape Safari', emoji: '🔺' },
+  { id: 'memory-match', title: 'Memory Match', emoji: '🃏' },
 ] as const;
 
 export const gameIds: readonly string[] = gameCatalog.map((game) => game.id);

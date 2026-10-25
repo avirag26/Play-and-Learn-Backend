@@ -106,7 +106,7 @@ describe('premium plan and admin', () => {
     expect((await users.listAdmins()).map((user) => user.email)).toEqual([ADMIN]);
     const res = await http().get('/api/admin/plan').set('Cookie', admin).expect(200);
     expect(res.body.provider).toBe('fake');
-    expect(res.body.games.map((game: { id: string }) => game.id)).toEqual(['alphabet-adventure', 'animal-safari', 'color-quest', 'count-the-stars', 'shape-safari']);
+    expect(res.body.games.map((game: { id: string }) => game.id)).toEqual(['alphabet-adventure', 'animal-safari', 'color-quest', 'count-the-stars', 'shape-safari', 'memory-match']);
   });
 
   it('validates and saves the price, duration and premium games', async () => {
