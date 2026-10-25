@@ -9,6 +9,7 @@ export const gameCatalog = [
   { id: 'count-the-stars', title: 'Count the Stars', emoji: '⭐' },
   { id: 'shape-safari', title: 'Shape Safari', emoji: '🔺' },
   { id: 'memory-match', title: 'Memory Match', emoji: '🃏' },
+  { id: 'puzzle-playground', title: 'Puzzle Playground', emoji: '🧩' },
 ] as const;
 
 export const gameIds: readonly string[] = gameCatalog.map((game) => game.id);
