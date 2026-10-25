@@ -19,6 +19,9 @@ export type PublicPlan = {
   currency: string;
   durationDays: number;
   premiumGameIds: string[];
+  /** Home Missions after the first `freeMissionDays` days need Premium when this is on. */
+  missionsPremium: boolean;
+  freeMissionDays: number;
   /** Whether parents can buy right now (plan switched on and a gateway configured). */
   available: boolean;
   requiresPhone: boolean;
@@ -49,19 +52,19 @@ export class BillingService {
   async getPlan(): Promise<Plan> {
     const saved = await this.plans.findOne({ key: PLAN_KEY }).lean().exec();
     if (!saved) return { ...defaultPlan, updatedAt: null, updatedBy: null };
-    return { name: saved.name, amount: saved.amount, currency: saved.currency, durationDays: saved.durationDays, premiumGameIds: saved.premiumGameIds.filter((id) => gameCatalog.some((game) => game.id === id)), active: saved.active, updatedAt: saved.updatedAt?.toISOString() ?? null, updatedBy: saved.updatedBy };
+    return { name: saved.name, amount: saved.amount, currency: saved.currency, durationDays: saved.durationDays, premiumGameIds: saved.premiumGameIds.filter((id) => gameCatalog.some((game) => game.id === id)), missionsPremium: saved.missionsPremium ?? defaultPlan.missionsPremium, freeMissionDays: saved.freeMissionDays ?? defaultPlan.freeMissionDays, active: saved.active, updatedAt: saved.updatedAt?.toISOString() ?? null, updatedBy: saved.updatedBy };
   }
 
   async getPublicPlan(): Promise<PublicPlan> {
     const plan = await this.getPlan();
-    return { name: plan.name, amount: plan.amount, currency: plan.currency, durationDays: plan.durationDays, premiumGameIds: plan.premiumGameIds, available: plan.active && this.provider !== null, requiresPhone: this.provider?.requiresPhone ?? false };
+    return { name: plan.name, amount: plan.amount, currency: plan.currency, durationDays: plan.durationDays, premiumGameIds: plan.premiumGameIds, missionsPremium: plan.missionsPremium, freeMissionDays: plan.freeMissionDays, available: plan.active && this.provider !== null, requiresPhone: this.provider?.requiresPhone ?? false };
   }
 
   async updatePlan(dto: UpdatePlanDto, adminEmail: string): Promise<Plan> {
     await this.plans
-      .updateOne({ key: PLAN_KEY }, { $set: { name: dto.name, amount: dto.amount, durationDays: dto.durationDays, premiumGameIds: dto.premiumGameIds, active: dto.active, updatedBy: adminEmail }, $setOnInsert: { key: PLAN_KEY, currency: defaultPlan.currency } }, { upsert: true })
+      .updateOne({ key: PLAN_KEY }, { $set: { name: dto.name, amount: dto.amount, durationDays: dto.durationDays, premiumGameIds: dto.premiumGameIds, missionsPremium: dto.missionsPremium, freeMissionDays: dto.freeMissionDays, active: dto.active, updatedBy: adminEmail }, $setOnInsert: { key: PLAN_KEY, currency: defaultPlan.currency } }, { upsert: true })
       .exec();
-    this.logger.log(`Plan updated by ${adminEmail}: ${dto.amount} paise for ${dto.durationDays} days, premium games [${dto.premiumGameIds.join(', ')}], ${dto.active ? 'on sale' : 'off sale'}`);
+    this.logger.log(`Plan updated by ${adminEmail}: ${dto.amount} paise for ${dto.durationDays} days, premium games [${dto.premiumGameIds.join(', ')}], missions ${dto.missionsPremium ? `Premium after ${dto.freeMissionDays} free days` : 'free'}, ${dto.active ? 'on sale' : 'off sale'}`);
     return this.getPlan();
   }
 

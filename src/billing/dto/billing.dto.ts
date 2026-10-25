@@ -56,5 +56,14 @@ export class UpdatePlanDto {
   premiumGameIds: string[];
 
   @IsBoolean()
+  missionsPremium: boolean;
+
+  /** Free mission days before Premium is needed: 0 to 18 (there are 18 missions). */
+  @IsInt({ message: 'Free mission days must be a whole number.' })
+  @Min(0, { message: 'Free mission days can be 0 or more.' })
+  @Max(18, { message: 'There are only 18 missions.' })
+  freeMissionDays: number;
+
+  @IsBoolean()
   active: boolean;
 }

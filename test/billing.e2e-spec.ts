@@ -20,7 +20,7 @@ const DAY = 24 * 60 * 60 * 1000;
 let counter = 0;
 const newIp = () => `198.18.0.${++counter % 250}`;
 const http = () => request(app.getHttpServer());
-const validPlan = { name: 'Premium', amount: 24_900, durationDays: 30, premiumGameIds: ['animal-safari', 'color-quest'], active: true };
+const validPlan = { name: 'Premium', amount: 24_900, durationDays: 30, premiumGameIds: ['animal-safari', 'color-quest'], missionsPremium: true, freeMissionDays: 3, active: true };
 
 /** Creates a verified account and returns its session cookies. */
 async function signedIn(email: string): Promise<string[]> {
@@ -81,7 +81,7 @@ afterAll(async () => {
 describe('premium plan and admin', () => {
   it('starts with a default plan that is not on sale', async () => {
     const res = await http().get('/api/billing/plan').expect(200);
-    expect(res.body).toEqual({ name: 'Play & Learn Premium', amount: 19_900, currency: 'INR', durationDays: 30, premiumGameIds: [], available: false, requiresPhone: false });
+    expect(res.body).toEqual({ name: 'Play & Learn Premium', amount: 19_900, currency: 'INR', durationDays: 30, premiumGameIds: [], missionsPremium: false, freeMissionDays: 3, available: false, requiresPhone: false });
   });
 
   it('only lets accounts with the admin role into the admin API', async () => {
@@ -111,13 +111,13 @@ describe('premium plan and admin', () => {
 
   it('validates and saves the price, duration and premium games', async () => {
     const cookies = await adminCookies();
-    const bad = await http().put('/api/admin/plan').set('Cookie', cookies).send({ ...validPlan, amount: 50, premiumGameIds: ['not-a-game'], durationDays: 0 }).expect(400);
-    expect(bad.body.message).toEqual(expect.arrayContaining(['The price must be at least ₹1.', 'Unknown game selected.', 'Premium must last at least 1 day.']));
+    const bad = await http().put('/api/admin/plan').set('Cookie', cookies).send({ ...validPlan, amount: 50, premiumGameIds: ['not-a-game'], durationDays: 0, freeMissionDays: 19 }).expect(400);
+    expect(bad.body.message).toEqual(expect.arrayContaining(['The price must be at least ₹1.', 'Unknown game selected.', 'Premium must last at least 1 day.', 'There are only 18 missions.']));
 
     const saved = await http().put('/api/admin/plan').set('Cookie', cookies).send(validPlan).expect(200);
     expect(saved.body.plan).toMatchObject({ ...validPlan, currency: 'INR', updatedBy: ADMIN });
     const publicPlan = await http().get('/api/billing/plan').expect(200);
-    expect(publicPlan.body).toMatchObject({ amount: 24_900, premiumGameIds: ['animal-safari', 'color-quest'], available: true });
+    expect(publicPlan.body).toMatchObject({ amount: 24_900, premiumGameIds: ['animal-safari', 'color-quest'], missionsPremium: true, freeMissionDays: 3, available: true });
   });
 });
 
